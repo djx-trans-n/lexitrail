@@ -56,3 +56,24 @@ test('local backup format rejects wrong app, invalid records and oversized paylo
   assert.throws(() => S.readBackup(' '.repeat(S.LIMIT + 1)), /8 MB/);
   backup.state.words.forest.status = 'invalid'; assert.throws(() => S.readBackup(JSON.stringify(backup)), /词条/);
 });
+test('Claude Code material syncs like DeepSeek material; unknown models are rejected', () => {
+  const state = C.emptyState(); C.mark(state, 'apple', 'learning', {}, null, 10);
+  state.words.apple.lookup = { ...material, model: 'claude-code' };
+  assert.equal(S.cleanState(state).words.apple.lookup.model, 'claude-code');
+  state.words.apple.lookup = { ...material, model: 'other-model' };
+  assert.throws(() => S.cleanState(state), /云端释义格式无效/);
+});
+test('an explicit level change wins and untouched entries of removed levels do not return from older snapshots', () => {
+  const dict = { forest: 'B1', trail: 'B1', obscure: 'C1' };
+  const older = C.emptyState(); C.seed(older, ['B1', 'C1'], dict, 10); C.mark(older, 'trail', 'learning', dict, null, 20);
+  const changed = S.cleanState(older); C.setLevels(changed, ['C1'], dict, 100);
+  for (const merged of [S.merge(changed, older), S.merge(older, changed)]) {
+    assert.deepEqual(merged.levels, ['C1']); assert.equal(merged.levelsUpdated, 100);
+    assert.deepEqual(Object.keys(merged.words).sort(), ['obscure', 'trail']); assert.equal(merged.words.trail.status, 'learning');
+  }
+  const readded = S.cleanState(changed); C.setLevels(readded, ['B1', 'C1'], dict, 200);
+  const merged = S.merge(changed, readded);
+  assert.deepEqual(merged.levels, ['B1', 'C1']); assert(Object.hasOwn(merged.words, 'forest'));
+  const legacy = state(); legacy.levels = [];
+  assert(Object.hasOwn(S.merge(legacy, state()).words, 'apple'));
+});

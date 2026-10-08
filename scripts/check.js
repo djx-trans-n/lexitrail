@@ -3,8 +3,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const root = path.join(__dirname, '..'), folder = path.join(root, 'extension');
-for (const entry of fs.readdirSync(folder)) {
-  if (entry.endsWith('.js')) execFileSync(process.execPath, ['--check', path.join(folder, entry)]);
+for (const dir of [folder, path.join(root, 'native-host')]) {
+  for (const entry of fs.readdirSync(dir)) if (entry.endsWith('.js')) execFileSync(process.execPath, ['--check', path.join(dir, entry)]);
 }
 const manifest = require('../extension/manifest.json');
 if (manifest.version !== require('../package.json').version) throw Error('Version mismatch');

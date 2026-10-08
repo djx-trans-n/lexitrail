@@ -25,7 +25,7 @@
     if (!input || typeof input !== 'object' || !input.words || typeof input.words !== 'object' || Array.isArray(input.words)) throw Error('云端词本格式无效。');
     if (Object.keys(input.words).length > 50000) throw Error('云端词本超出支持的容量。');
     const state = { schema: 2, initialized: Boolean(input.initialized), enabled: input.enabled !== false,
-      enabledUpdated: clock(input.enabledUpdated), levels: C.LEVELS.filter(level => input.levels?.includes(level)), words: {} };
+      enabledUpdated: clock(input.enabledUpdated), levels: C.LEVELS.filter(level => input.levels?.includes(level)), levelsUpdated: clock(input.levelsUpdated), words: {} };
     for (const [term, value] of Object.entries(input.words)) {
       if (C.word(term) !== term || !value || !Object.hasOwn(C.STATUSES, value.status)) throw Error('云端词条格式无效。');
       const lookup = value.lookup ? C.learningMaterial({ ...value.lookup, word: term }, term) : null;
@@ -43,6 +43,10 @@
   function merge(first, second) {
     const a = cleanState(first), b = cleanState(second);
     const result = { ...a, initialized: a.initialized || b.initialized, levels: C.LEVELS.filter(l => a.levels.includes(l) || b.levels.includes(l)), words: { ...a.words } };
+    // An explicit level change wins over older level sets; unchanged sets keep the original union.
+    if (a.levelsUpdated !== b.levelsUpdated) {
+      const latest = b.levelsUpdated > a.levelsUpdated ? b : a; result.levels = latest.levels; result.levelsUpdated = latest.levelsUpdated;
+    }
     if (b.enabledUpdated > a.enabledUpdated) { result.enabled = b.enabled; result.enabledUpdated = b.enabledUpdated; }
     else if (b.enabledUpdated === a.enabledUpdated) result.enabled = a.enabled && b.enabled;
     const rank = { new: 0, learning: 1, mastered: 2 };
@@ -57,6 +61,8 @@
         created: Math.min(left.created, right.created), updated: Math.max(left.updated, right.updated) };
       if (lookups.length) result.words[term].lookup = lookups[0];
     }
+    // After an explicit level change, untouched entries of removed levels would otherwise return from older snapshots.
+    if (result.levelsUpdated) for (const [term, record] of Object.entries(result.words)) if (!result.levels.includes(record.level) && C.seedOnly(record)) delete result.words[term];
     return result;
   }
   function snapshot(state, deviceId) {

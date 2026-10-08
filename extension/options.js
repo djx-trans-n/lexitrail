@@ -1,11 +1,13 @@
 (async function () {
   'use strict';
   const C = LexiTrail;
-  let state = C.emptyState(), tab = 'new', page = 0, hasKey = false, keyDirty = false, syncState = {}, syncBusy = false, provider = 'google', webdavState = {}, webdavDirty = false;
+  let state = C.emptyState(), tab = 'new', page = 0, hasKey = false, keyDirty = false, syncState = {}, syncBusy = false, provider = 'google', webdavState = {}, webdavDirty = false, aiProvider = 'deepseek', levelsDirty = false;
   const PAGE_SIZE = 40, $ = selector => document.querySelector(selector);
   function el(tag, text, className) { const node = document.createElement(tag); if (text != null) node.textContent = text; if (className) node.className = className; return node; }
   async function send(message) {
     const response = await chrome.runtime.sendMessage(message);
+    // Unpacked updates refresh this page from disk, but the worker keeps old code until the extension reloads.
+    if (response?.error === '未知请求。') throw new Error('扩展后台仍是旧版本，请在扩展管理页重新加载 LexiTrail 后刷新本页。');
     if (!response?.ok) throw new Error(response?.error ?? '操作失败。');
     return response.data;
   }
@@ -25,7 +27,7 @@
     for (const record of records.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE)) {
       const row = el('tr'); row.append(el('td', record.word));
       const level = el('td'), badge = el('span', record.level || '—'); badge.className = 'level-tag'; level.append(badge); row.append(level);
-      const translation = el('td', record.translation || record.lookup?.meaning || '添加 Key 后查词可补充释义');
+      const translation = el('td', record.translation || record.lookup?.meaning || '查词后可补充 AI 释义');
       translation.className = 'word-translation'; row.append(translation);
       const context = el('td'); context.className = 'context';
       if (record.lookup) {
@@ -62,6 +64,9 @@
     $('#empty').hidden = records.length > 0;
     $('#page-number').textContent = `${page + 1} / ${pages}`; $('#previous').disabled = page === 0; $('#next').disabled = page >= pages - 1;
     $('#seed-description').textContent = state.initialized ? `初始等级：${state.levels.join('、')}。现在由三个个人词本维护每个词的状态。` : '首次使用时，您可以选择多个 CEFR 等级。';
+    $('#level-editor').hidden = !state.initialized;
+    if (!levelsDirty) document.querySelectorAll('#level-options input').forEach(i => { i.checked = state.levels.includes(i.value); });
+    renderLevels();
   }
   const systemTheme = window.matchMedia?.('(prefers-color-scheme: dark)');
   let theme = '';
@@ -90,6 +95,7 @@
     if (!keyDirty) $('#api-key').value = settings.key || '';
     syncState = settings.sync || {}; webdavState = settings.webdav || {};
     provider = settings.provider || 'google'; $('#sync-provider').value = provider;
+    aiProvider = settings.aiProvider || 'deepseek'; $('#ai-provider').value = aiProvider; renderProvider();
     if (!webdavDirty) {
       $('#webdav-url').value = webdavState.url || ''; $('#webdav-username').value = webdavState.username || '';
       $('#webdav-password').placeholder = webdavState.configured ? '已保存；留空沿用原密码' : '输入应用密码';
@@ -100,11 +106,12 @@
   }
   try {
     const levels = await send({ type: 'GET_LEVELS' });
-    for (const { level, count } of levels) {
+    for (const target of ['#levels', '#level-options']) for (const { level, count } of levels) {
       const label = el('label'); label.className = 'level-card'; const checkbox = el('input'); checkbox.type = 'checkbox'; checkbox.value = level;
-      label.append(checkbox, el('strong', level), el('span', `${count.toLocaleString()} 个词`)); $('#levels').append(label);
+      label.append(checkbox, el('strong', level), el('span', `${count.toLocaleString()} 个词`)); $(target).append(label);
     }
     await refresh(); $('#enabled').checked = state.enabled;
+    if (aiProvider === 'claude-code') checkClaude();
   } catch (e) { message(e.message, true); }
   document.querySelectorAll('.nav').forEach(button => button.addEventListener('click', () => { tab = button.dataset.tab; page = 0; render(); message(''); }));
   $('#search').addEventListener('input', () => { page = 0; render(); });
@@ -115,6 +122,22 @@
       const levels = [...document.querySelectorAll('#levels input:checked')].map(i => i.value);
       const result = await send({ type: 'INITIALIZE', levels }); await refresh(); message(`已建立初始词本，共 ${result.count.toLocaleString()} 个词。`);
     } catch (e) { message(e.message, true); } finally { button.disabled = false; }
+  });
+  function chosenLevels() { return [...document.querySelectorAll('#level-options input:checked')].map(i => i.value); }
+  function renderLevels() {
+    const chosen = chosenLevels();
+    $('#update-levels').disabled = !chosen.length || chosen.join() === C.LEVELS.filter(l => state.levels.includes(l)).join();
+  }
+  $('#level-options').addEventListener('change', () => { levelsDirty = true; renderLevels(); });
+  $('#update-levels').addEventListener('click', async () => {
+    const button = $('#update-levels'), levels = chosenLevels(), dropped = state.levels.filter(l => !levels.includes(l));
+    const removable = Object.values(state.words).filter(r => dropped.includes(r.level) && C.seedOnly(r)).length;
+    if (removable && !confirm(`将从生词本移除 ${removable.toLocaleString()} 个尚未操作过的 ${dropped.join('、')} 词；学习中、已掌握和有收藏语境的词保留。确定更新吗？`)) return;
+    button.disabled = true;
+    try {
+      const result = await send({ type: 'SET_LEVELS', levels }); levelsDirty = false; await refresh();
+      message(`初始等级已更新为 ${levels.join('、')}：新增 ${result.added.toLocaleString()} 个词，移除 ${result.removed.toLocaleString()} 个词。`);
+    } catch (e) { message(e.message, true); renderLevels(); }
   });
   function renderKey() {
     const configured = hasKey && !keyDirty, button = $('#save-key');
@@ -140,6 +163,26 @@
       await refresh(); message(clearKey ? 'Key 已删除。' : 'Key 已配置。');
     } catch (e) { message(e.message, true); } finally { button.disabled = false; }
   });
+  function renderProvider() {
+    $('#deepseek-fields').hidden = aiProvider !== 'deepseek'; $('#claude-fields').hidden = aiProvider !== 'claude-code';
+  }
+  function claudeStatus(text, kind = '') {
+    const node = $('#claude-status'); node.textContent = text; node.classList.toggle('error', kind === 'error'); node.classList.toggle('ok', kind === 'ok');
+  }
+  async function checkClaude() {
+    const button = $('#claude-check'); button.disabled = true; claudeStatus('正在检测本机 Claude Code…');
+    try { const status = await send({ type: 'CLAUDE_STATUS' }); claudeStatus(`已连接 Claude Code ${status.version} · 模型 ${status.model}`, 'ok'); }
+    catch (e) { claudeStatus(e.message, 'error'); } finally { button.disabled = false; }
+  }
+  $('#ai-provider').addEventListener('change', async () => {
+    const select = $('#ai-provider'), chosen = select.value; select.disabled = true;
+    try {
+      await send({ type: 'AI_PROVIDER', provider: chosen }); aiProvider = chosen; renderProvider();
+      message(`释义服务已切换为 ${select.selectedOptions[0].textContent}。`);
+      if (chosen === 'claude-code') await checkClaude();
+    } catch (e) { message(e.message, true); select.value = aiProvider; } finally { select.disabled = false; }
+  });
+  $('#claude-check').addEventListener('click', checkClaude);
   $('#enabled').addEventListener('change', async () => {
     try { await send({ type: 'SAVE_SETTINGS', enabled: $('#enabled').checked }); await refresh(); message('阅读标注设置已保存。'); }
     catch (e) { message(e.message, true); $('#enabled').checked = state.enabled; }

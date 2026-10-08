@@ -1,6 +1,6 @@
 # LexiTrail
 
-英文阅读词汇插件，Chrome / Edge Manifest V3，版本 0.0.6。
+英文阅读词汇插件，Chrome / Edge Manifest V3，版本 0.0.7。
 
 ## 安装和使用
 
@@ -9,7 +9,7 @@
 3. 点击插件图标 → “打开个人词本与设置”，勾选一个或多个 A1–C2 等级，建立初始词本。
 4. 打开或刷新英语网页。生词本使用蓝色虚线并在词后添加括号中文释义，学习中使用橙色虚线，已掌握保持原文。
 5. 在虚线英文词头悬停约 0.3 秒，直接显示查词卡；移入卡片可继续操作。链接中的虚线词点击后固定查词卡，卡内“前往原链接”可跳转，Ctrl/⌘ 点击保留浏览器行为。任意其他英文单词仍可选中后点击 **L** 查词。标记同时保存原文语境和来源。
-6. 在“设置”中填写自己的 DeepSeek Key，启用简短中文释义、英文定义及一条例句。保存后输入框显示掩码，按钮显示“已配置”；悬停按钮显示“删除 Key”，点击可清除。
+6. 在“设置 → AI 释义”中填写自己的 DeepSeek Key，启用简短中文释义、英文定义及一条例句。保存后输入框显示掩码，按钮显示“已配置”；悬停按钮显示“删除 Key”，点击可清除。也可以切换为 **Claude Code CLI**，使用 Claude 订阅额度生成释义，见下文“使用 Claude Code CLI”。
 
 旧词本首次升级到固定身份请按 [docs/UPGRADE.md](docs/UPGRADE.md) 使用迁移包导出备份，再加载标准包恢复。
 
@@ -17,7 +17,7 @@
 
 ## 词本规则
 
-- CEFR 等级仅用于一次性初始化。导入后统一维护三个个人状态，等级始终作为参考标签。
+- CEFR 等级用于初始化生词本，之后统一维护三个个人状态，等级始终作为参考标签。设置页“初始词本来源”可调整等级：取消某个等级会移除其中尚未操作过的生词，学习中、已掌握、有收藏语境或已保存释义的词保留；勾选新等级会补充该等级的词。
 - 词表按英文词头处理，多个词性/义项采用较低等级。任何有效英文单词都可通过选中后加入学习中，包括词表以外的词。
 - 同一词的状态在已打开网页同步更新；学习状态互斥，重启浏览器后保留。
 - 全部 8,679 个词库条目附有中文主要释义，通常最多三义；原词表 `porten` 明确标为“词表拼写待核对”。51 项补充/校正记录可在数据说明中追溯。
@@ -29,6 +29,22 @@
 有 Key 时使用官方 **deepseek-flash**，关闭思考，要求 JSON，最多 320 个输出 token；展示再做长度限制。查询仅发送选中或悬停的词和最多 300 字符的附近语境。快速划过和中文括号区域会跳过查询；有 Key 时悬停查词会使用 DeepSeek API，重复词优先复用缓存。加入学习中或标记已掌握后，首次成功的 AI 释义、英文定义、双语例句及查询语境持久保存在本机，设置页词本可展开浏览。词库外单词同样保存。
 
 同一词后续查询直接复用首次结果，跨语境与后台重启均有效；切回生词本仍保留已保存材料。尚未加入学习中的查询使用最多 1000 条内存 LRU 缓存，后台停止或更换 Key 时清空，设置页仅显示已保存材料。查询返回前即可加入学习中，返回后自动补存。数据字段与迁移规则见 [docs/DATA_MODEL.md](docs/DATA_MODEL.md)。
+
+## 使用 Claude Code CLI
+
+“设置 → AI 释义”可在 DeepSeek Flash 与 Claude Code CLI 之间切换。Claude Code 通过本机已登录的 `claude` 命令生成同样格式的释义与例句，消耗 Claude 订阅额度，无需 API Key。扩展无法直接启动本地程序，因此需先安装一次本地桥接（Chrome Native Messaging）：
+
+```sh
+npm run claude-host                      # 项目目录；解压包内运行 node native-host/install.js
+npm run claude-host -- --model sonnet    # 可选：更换模型，默认 haiku
+npm run claude-host -- --uninstall       # 移除桥接
+```
+
+安装脚本把桥接复制到 `~/Library/Application Support/LexiTrail/claude-host/`（Linux 为 `~/.local/share/lexitrail/claude-host/`），记录 `claude` 与 `node` 的绝对路径，并为已安装的 Chrome / Chromium / Edge 注册仅允许本扩展 ID 访问的 `com.lexitrail.claude`。随后重新加载扩展，在设置页选择 Claude Code 并点击“检测连接”。升级 LexiTrail、移动 `claude` 或 `node` 后重新运行安装脚本。目前支持 macOS 与 Linux。
+
+桥接只接受单词和最多 300 字符的语境，提示词与命令参数固定在桥接内：`claude -p --safe-mode --tools ""`，关闭全部工具、MCP、插件、CLAUDE.md 与思考，网页内容无法让 Claude 执行命令或读写文件。每次查词约 3–5 秒，同一时间只运行一次查询；连续悬停多个词时仅保留最新的等待请求，其余提示重新查词。切换释义服务会清空未保存的临时缓存，已保存的材料保留原服务标记。
+
+使用 Claude Code 保存的释义标记为 `claude-code`。各设备需更新到 0.0.7 后再同步，旧版本会拒绝含此标记的云端词本。
 
 发音使用有道词典的公开发音入口，当前可直接获取音频，无需 Key。音频请求失败时使用浏览器/系统英文语音；AI 服务异常时仍可发音、标记和保存语境，并显示可重试的原因。AI 查询由选词查词或英文虚线词头停留触发，发音请求由发音按钮触发，网页扫描在本地运行。
 
@@ -55,6 +71,6 @@ npm test
 npm run build
 ```
 
-构建输出位于 `dist/lexitrail/` 和 `dist/lexitrail-0.0.6.zip`；`node scripts/build.js --migration` 生成旧身份备份迁移包。数据来源、固定版本与许可见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+构建输出位于 `dist/lexitrail/` 和 `dist/lexitrail-0.0.7.zip`；`node scripts/build.js --migration` 生成旧身份备份迁移包。数据来源、固定版本与许可见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
 当前本地分支 `fix/webdav-connection-persistence` 使用个人 Git 身份。老板已授权这个个人项目直接提交并推送，实质风险另行审核。首次正式 Git 提交版本为 0.0.3；0.1 由老板宣布首个可用小版本时启用。

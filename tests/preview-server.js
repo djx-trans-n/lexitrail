@@ -12,6 +12,8 @@ backend.context.LexiTrailAPI.deepseek = async (term) => {
   if (term === 'quasar') return { meaning: '类星体', definition: 'A very bright, distant galactic nucleus.', partOfSpeech: 'noun', example: 'A quasar shines far beyond our galaxy.', exampleTranslation: '一颗类星体在我们银河系之外的远处闪耀。' };
   return { meaning: translations[term] || '测试释义', definition: 'Able to recover quickly after difficulty.', partOfSpeech: 'adjective', example: 'The resilient forest grows again after the storm.', exampleTranslation: '这片有韧性的森林在风暴后重新生长。' };
 };
+backend.context.LexiTrailAPI.claudeCode = backend.context.LexiTrailAPI.deepseek;
+backend.context.LexiTrailAPI.claudeCodeStatus = async () => ({ version: '0.0.0 (fixture)', model: 'haiku' });
 // Simulated Drive for browser UI checks; production OAuth/REST is unit-tested separately.
 const cloudFiles = new Map();
 const cloudRequest = async (url, options) => {
@@ -56,7 +58,7 @@ const stub = `(() => {
     sendMessage: async message => {
       if(message.type==='OPEN_OPTIONS'){location.href='/options.html';return {ok:true,data:{}};}
       const response = await fetch('/rpc',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message,settings:location.pathname==='/options.html'})}).then(r=>r.json());
-      if(['INITIALIZE','MARK_WORD','SAVE_SETTINGS','LOOKUP','DRIVE_CONNECT','DRIVE_DISCONNECT','DRIVE_SYNC','IMPORT_BACKUP','SYNC_PROVIDER','WEBDAV_CONNECT','WEBDAV_DISCONNECT','WEBDAV_SYNC'].includes(message.type) && response.ok){changed();channel.postMessage('changed');}
+      if(['INITIALIZE','SET_LEVELS','MARK_WORD','SAVE_SETTINGS','LOOKUP','DRIVE_CONNECT','DRIVE_DISCONNECT','DRIVE_SYNC','IMPORT_BACKUP','SYNC_PROVIDER','WEBDAV_CONNECT','WEBDAV_DISCONNECT','WEBDAV_SYNC'].includes(message.type) && response.ok){changed();channel.postMessage('changed');}
       return response;
     }
   }};

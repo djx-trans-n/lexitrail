@@ -2,6 +2,7 @@
   'use strict';
   const LEVELS = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'];
   const STATUSES = { new: '生词本', learning: '学习中', mastered: '已掌握' };
+  const AI_MODELS = ['deepseek-flash', 'claude-code'];
   function word(value) {
     const normalized = String(value ?? '').trim().toLowerCase().replaceAll('’', "'");
     return /^[a-z]+(?:['-][a-z]+)*$/.test(normalized) && normalized.length <= 48 ? normalized : '';
@@ -22,6 +23,29 @@
     state.levels = selected;
     state.revision = (state.revision ?? 0) + 1;
     return state;
+  }
+  // An untouched initialization entry carries no personal data and can be re-seeded at any time.
+  function seedOnly(record) {
+    return record.status === 'new' && !record.statusUpdated && !record.studySaved && !record.lookup && !record.examples?.length;
+  }
+  // Removing a level drops only its untouched entries; anything studied, marked or collected stays.
+  function setLevels(state, levels, dictionary, now = Date.now()) {
+    const selected = LEVELS.filter(l => levels.includes(l));
+    if (!state.initialized) throw new Error('请先建立初始词本。');
+    if (!selected.length) throw new Error('请选择至少一个等级。');
+    let added = 0, removed = 0;
+    for (const [term, record] of Object.entries(state.words)) {
+      if (!selected.includes(record.level) && seedOnly(record)) { delete state.words[term]; removed++; }
+    }
+    for (const [term, level] of Object.entries(dictionary)) {
+      if (selected.includes(level) && !Object.hasOwn(state.words, term)) {
+        state.words[term] = { word: term, level, status: 'new', examples: [], created: now, updated: now }; added++;
+      }
+    }
+    state.levels = selected;
+    state.levelsUpdated = now;
+    state.revision = (state.revision ?? 0) + 1;
+    return { added, removed };
   }
   function mark(state, value, status, dictionary, example, now = Date.now()) {
     const term = word(value);
@@ -86,10 +110,10 @@
     return result;
   }
   function learningMaterial(value, term) {
-    if (!value || word(value.word) !== term || value.model !== 'deepseek-flash') return null;
+    if (!value || word(value.word) !== term || !AI_MODELS.includes(value.model)) return null;
     try {
       const fields = aiFields(value);
-      return { ...fields, schema: 1, model: 'deepseek-flash', promptVersion: 1,
+      return { ...fields, schema: 1, model: value.model, promptVersion: 1,
         queriedAt: Number.isFinite(value.queriedAt) && value.queriedAt > 0 ? value.queriedAt : Date.now(),
         context: short(value.context, 300) };
     } catch { return null; }
@@ -105,7 +129,7 @@
     const term = word(value);
     return term ? `https://dict.youdao.com/dictvoice?audio=${encodeURIComponent(term)}&type=2` : '';
   }
-  const api = { LEVELS, STATUSES, word, emptyState, seed, mark, enrich, counts, tokens, short, parseAI, learningMaterial, safeAudio, dictionaryAudio };
+  const api = { LEVELS, STATUSES, AI_MODELS, word, emptyState, seed, seedOnly, setLevels, mark, enrich, counts, tokens, short, parseAI, aiFields, learningMaterial, safeAudio, dictionaryAudio };
   root.LexiTrail = api;
   if (typeof module !== 'undefined') module.exports = api;
 })(globalThis);

@@ -44,6 +44,27 @@ function cached(term) {
   if (result) { lookups.delete(term); lookups.set(term, result); }
   return result;
 }
+// Claude Code starts one local CLI process per lookup and spends subscription quota, so
+// hovering across many words must not start one each: one runs, only the newest waits.
+let claudeRunning = false, claudeNext = null;
+function claudeLookup(term, context) {
+  return new Promise((resolve, reject) => {
+    claudeNext?.reject(new Error('已改查其他单词，请重新查词。'));
+    claudeNext = { term, context, resolve, reject };
+    drainClaude();
+  });
+}
+async function drainClaude() {
+  if (claudeRunning || !claudeNext) return;
+  const job = claudeNext; claudeNext = null; claudeRunning = true;
+  try { job.resolve(await LexiTrailAPI.claudeCode(job.term, job.context)); }
+  catch (error) { job.reject(error); }
+  finally { claudeRunning = false; drainClaude(); }
+}
+async function aiProvider() {
+  return (await chrome.storage.local.get('aiProvider')).aiProvider === 'claude-code' ? 'claude-code' : 'deepseek';
+}
+function resetLookups() { cacheGeneration++; lookups.clear(); pendingLookups.clear(); }
 function remember(term, result) {
   lookups.delete(term); lookups.set(term, result);
   if (lookups.size > CACHE_LIMIT) lookups.delete(lookups.keys().next().value);
@@ -52,7 +73,7 @@ function view(term, dict, translations, result, notice = '') {
   return {
     word: term, level: Object.hasOwn(dict, term) ? dict[term] : '',
     meaning: Object.hasOwn(translations, term) ? translations[term] : '', ...result,
-    audio: C.dictionaryAudio(term), source: result ? 'DeepSeek Flash' : 'ECDICT / LexiTrail', notice
+    audio: C.dictionaryAudio(term), source: result ? (result.model === 'claude-code' ? 'Claude Code' : 'DeepSeek Flash') : 'ECDICT / LexiTrail', notice
   };
 }
 async function retain(term, result) {
@@ -83,7 +104,21 @@ async function handle(message, sender) {
     case 'GET_SETTINGS': {
       if (!trusted(sender)) throw new Error('请在设置页查看配置。');
       return { key: (await chrome.storage.local.get('deepseekKey')).deepseekKey ?? '', sync: await drive.status(), webdav: await webdav.status(),
-        provider: (await chrome.storage.local.get('syncProvider')).syncProvider ?? 'google' };
+        provider: (await chrome.storage.local.get('syncProvider')).syncProvider ?? 'google', aiProvider: await aiProvider() };
+    }
+    case 'AI_PROVIDER': {
+      if (!trusted(sender)) throw Error('请在设置页选择释义服务。');
+      if (!['deepseek', 'claude-code'].includes(message.provider)) throw Error('释义服务无效。');
+      return serialized(async () => {
+        await chrome.storage.local.set({ aiProvider: message.provider });
+        // Unsaved results from the other service must not be shown as this one's.
+        resetLookups();
+        return {};
+      });
+    }
+    case 'CLAUDE_STATUS': {
+      if (!trusted(sender)) throw Error('请在设置页检测 Claude Code。');
+      return LexiTrailAPI.claudeCodeStatus();
     }
     case 'SYNC_PROVIDER': {
       if (!trusted(sender)) throw Error('请在设置页选择同步方式。');
@@ -155,6 +190,17 @@ async function handle(message, sender) {
         return { count: Object.keys(current.words).length };
       });
     }
+    case 'SET_LEVELS': {
+      if (!trusted(sender)) throw new Error('请在设置页调整初始等级。');
+      return serialized(async () => {
+        const current = await state();
+        const result = C.setLevels(current, Array.isArray(message.levels) ? message.levels : [], dict);
+        C.enrich(current, translations);
+        await chrome.storage.local.set({ state: current });
+        await notify();
+        return { ...result, count: Object.keys(current.words).length };
+      });
+    }
     case 'MARK_WORD': {
       return serialized(async () => {
         const current = await state();
@@ -180,7 +226,7 @@ async function handle(message, sender) {
           update.deepseekKey = message.key.trim();
         }
         await chrome.storage.local.set(update);
-        if (Object.hasOwn(update, 'deepseekKey')) { cacheGeneration++; lookups.clear(); pendingLookups.clear(); }
+        if (Object.hasOwn(update, 'deepseekKey')) resetLookups();
         await notify();
         return { saved: true };
       });
@@ -197,15 +243,16 @@ async function handle(message, sender) {
       if (pendingLookups.has(term)) return pendingLookups.get(term);
       const generation = cacheGeneration;
       const promise = (async () => {
-        const key = (await chrome.storage.local.get('deepseekKey')).deepseekKey ?? '';
-        if (!key) return view(term, dict, translations, null, '在设置中添加 DeepSeek Key，可生成简短中文释义和例句。');
+        const provider = await aiProvider();
+        const key = provider === 'deepseek' ? (await chrome.storage.local.get('deepseekKey')).deepseekKey ?? '' : '';
+        if (provider === 'deepseek' && !key) return view(term, dict, translations, null, '在设置中添加 DeepSeek Key，可生成简短中文释义和例句。');
         let result;
         try {
           const context = C.short(message.context, 300);
-          const generated = await LexiTrailAPI.deepseek(term, context, key);
-          result = { ...generated, schema: 1, model: 'deepseek-flash', promptVersion: 1, queriedAt: Date.now(), context };
+          const generated = provider === 'claude-code' ? await claudeLookup(term, context) : await LexiTrailAPI.deepseek(term, context, key);
+          result = { ...generated, schema: 1, model: provider === 'claude-code' ? 'claude-code' : 'deepseek-flash', promptVersion: 1, queriedAt: Date.now(), context };
         } catch (error) { return view(term, dict, translations, null, error.message); }
-        // A key change cancels admission of old requests to both stores.
+        // A key or service change cancels admission of old requests to both stores.
         if (generation === cacheGeneration) { remember(term, result); await retain(term, result); }
         return view(term, dict, translations, result);
       })();

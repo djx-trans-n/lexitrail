@@ -30,7 +30,30 @@
     });
     return C.parseAI(response);
   }
-  const api = { deepseek };
+  const CLAUDE_HOST = 'com.lexitrail.claude';
+  // Messages from Chrome itself (not from the bridge) mean the bridge is missing or broken.
+  function bridgeError(error) {
+    const text = String(error?.message ?? '');
+    if (/not found/i.test(text)) return '未找到 Claude Code 本地桥接，请先运行 node native-host/install.js 安装。';
+    if (/forbidden/i.test(text)) return 'Claude Code 本地桥接未授权此扩展，请重新运行 node native-host/install.js。';
+    return 'Claude Code 本地桥接无法启动，请重新运行 node native-host/install.js。';
+  }
+  async function claudeBridge(message, timeoutMs) {
+    let timer, response;
+    const timeout = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('Claude Code 响应超时，请重试。')), timeoutMs); });
+    try { response = await Promise.race([chrome.runtime.sendNativeMessage(CLAUDE_HOST, message).catch(error => { throw new Error(bridgeError(error)); }), timeout]); }
+    finally { clearTimeout(timer); }
+    if (!response?.ok) throw new Error(C.short(response?.error, 200) || 'Claude Code 本地桥接返回了无效结果。');
+    return response.data;
+  }
+  async function claudeCode(term, context) {
+    return C.aiFields(await claudeBridge({ type: 'LOOKUP', word: term, context: C.short(context, 300) }, 75000));
+  }
+  async function claudeCodeStatus() {
+    const data = await claudeBridge({ type: 'PING' }, 20000);
+    return { version: C.short(data?.version, 60), model: C.short(data?.model, 80) };
+  }
+  const api = { deepseek, claudeCode, claudeCodeStatus };
   root.LexiTrailAPI = api;
   if (typeof module !== 'undefined') module.exports = api;
 })(globalThis);
