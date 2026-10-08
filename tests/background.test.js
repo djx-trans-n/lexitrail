@@ -192,3 +192,53 @@ test('concurrent connection validation locks provider changes and sync until it 
   assert((await w.send({ type: 'SYNC_PROVIDER', provider: 'webdav' })).ok);
   assert.equal((await w.send({ type: 'GET_SETTINGS' })).data.provider, 'webdav');
 });
+test('Claude Code provider needs no key, is settings-only, labels and retains its material', async () => {
+  const w = worker(); let requests = 0;
+  w.context.LexiTrailAPI.claudeCode = async (term, context) => { requests++; assert.equal(context, 'A quasar shines.'); return generated; };
+  w.context.LexiTrailAPI.deepseek = async () => { throw Error('DeepSeek must not be called'); };
+  assert.equal((await w.send({ type: 'AI_PROVIDER', provider: 'claude-code' }, 'https://example.org')).ok, false);
+  assert.equal((await w.send({ type: 'CLAUDE_STATUS' }, 'https://example.org')).ok, false);
+  assert.equal((await w.send({ type: 'AI_PROVIDER', provider: 'other' })).ok, false);
+  assert((await w.send({ type: 'AI_PROVIDER', provider: 'claude-code' })).ok);
+  assert.equal((await w.send({ type: 'GET_SETTINGS' })).data.aiProvider, 'claude-code');
+  const lookup = (await w.send({ type: 'LOOKUP', word: 'quasar', context: 'A quasar shines.' })).data;
+  assert.equal(lookup.source, 'Claude Code'); assert.equal(lookup.model, 'claude-code'); assert.equal(lookup.notice, '');
+  const marked = await w.send({ type: 'MARK_WORD', word: 'quasar', status: 'learning', lookup });
+  assert.equal(marked.data.lookup.model, 'claude-code'); assert.equal(requests, 1);
+});
+test('switching AI provider discards unsaved results from the other service', async () => {
+  const w = worker({ deepseekKey: 'fixture' }); const calls = [];
+  w.context.LexiTrailAPI.deepseek = async () => { calls.push('deepseek'); return generated; };
+  w.context.LexiTrailAPI.claudeCode = async () => { calls.push('claude'); return generated; };
+  assert.equal((await w.send({ type: 'LOOKUP', word: 'quasar' })).data.source, 'DeepSeek Flash');
+  await w.send({ type: 'AI_PROVIDER', provider: 'claude-code' });
+  assert.equal((await w.send({ type: 'LOOKUP', word: 'quasar' })).data.source, 'Claude Code');
+  await w.send({ type: 'AI_PROVIDER', provider: 'deepseek' });
+  await w.send({ type: 'LOOKUP', word: 'quasar' });
+  assert.deepEqual(calls, ['deepseek', 'claude', 'deepseek']);
+});
+test('Claude Code runs one lookup at a time and only the newest waiting word survives', async () => {
+  const w = worker({ aiProvider: 'claude-code' }); const started = [], finishers = {};
+  w.context.LexiTrailAPI.claudeCode = term => { started.push(term); return new Promise(r => { finishers[term] = () => r(generated); }); };
+  const first = w.send({ type: 'LOOKUP', word: 'alpha' });
+  await new Promise(r => setTimeout(r, 20));
+  const second = w.send({ type: 'LOOKUP', word: 'beta' }), third = w.send({ type: 'LOOKUP', word: 'gamma' });
+  await new Promise(r => setTimeout(r, 20));
+  assert.deepEqual(started, ['alpha']);
+  const skipped = await second; assert.match(skipped.data.notice, /重新查词/); assert.equal(skipped.data.example, undefined);
+  finishers.alpha(); assert.equal((await first).data.example, generated.example);
+  await new Promise(r => setTimeout(r, 20));
+  assert.deepEqual(started, ['alpha', 'gamma']);
+  finishers.gamma(); assert.equal((await third).data.source, 'Claude Code');
+  w.context.LexiTrailAPI.claudeCode = async () => generated;
+  assert.equal((await w.send({ type: 'LOOKUP', word: 'beta' })).data.example, generated.example);
+});
+test('initial levels change only from the settings page and keep studied words', async () => {
+  const w = worker(); await w.send({ type: 'INITIALIZE', levels: ['A1', 'A2'] });
+  await w.send({ type: 'MARK_WORD', word: 'apple', status: 'learning' });
+  assert.equal((await w.send({ type: 'SET_LEVELS', levels: ['C1'] }, 'https://example.org')).ok, false);
+  const result = await w.send({ type: 'SET_LEVELS', levels: ['C1'] });
+  assert.deepEqual({ ...result.data }, { added: 1, removed: 1, count: 2 });
+  assert.deepEqual(w.stored.state.levels, ['C1']); assert.equal(w.stored.state.words.apple.status, 'learning');
+  assert.equal(w.stored.state.words.forest, undefined); assert.equal(w.stored.state.words.obscure.translation, '晦涩的');
+});

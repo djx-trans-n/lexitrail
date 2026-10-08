@@ -17,6 +17,7 @@ for (const name of ['cefrj.csv', 'octanove.csv']) fs.rmSync(path.join(output, 'd
 fs.copyFileSync(path.join(root, 'README.md'), path.join(output, 'README.md'));
 fs.copyFileSync(path.join(root, 'THIRD_PARTY_NOTICES.md'), path.join(output, 'THIRD_PARTY_NOTICES.md'));
 fs.cpSync(path.join(root, 'docs'), path.join(output, 'docs'), { recursive: true });
+fs.cpSync(path.join(root, 'native-host'), path.join(output, 'native-host'), { recursive: true });
 const archive = path.join(root, 'dist', `lexitrail-${version}${migration ? '-migration' : ''}.zip`);
 fs.rmSync(archive, { force: true });
 execFileSync('/usr/bin/zip', ['-qr', archive, path.basename(output)], { cwd: path.dirname(output) });

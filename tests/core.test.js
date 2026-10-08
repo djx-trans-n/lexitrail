@@ -55,3 +55,17 @@ test('every CEFR entry has short Chinese translation or an explicit source-word 
   assert.equal(translations.apple, '苹果；家伙'); assert.equal(translations.download, '下载');
   assert.match(translations.porten, /待核对/);
 });
+test('changing levels removes only untouched entries of dropped levels and seeds added ones', () => {
+  const dict = { apple: 'A1', forest: 'B1', trail: 'B1', quasar: 'B1', candid: 'B1', glimpse: 'B1', obscure: 'C1', yield: 'C2' };
+  assert.throws(() => C.setLevels(C.emptyState(), ['B2'], dict), /请先建立/);
+  const state = C.emptyState(); C.seed(state, ['B1', 'C1'], dict, 10);
+  C.mark(state, 'trail', 'learning', dict, null, 20);
+  C.mark(state, 'quasar', 'new', dict, null, 30);
+  state.words.candid.examples.push({ text: 'A candid answer.', url: '', title: '', created: 40 });
+  state.words.glimpse.lookup = { meaning: '一瞥', example: 'A glimpse.' };
+  assert.throws(() => C.setLevels(state, [], dict), /至少一个/);
+  assert.deepEqual(C.setLevels(state, ['C2', 'C1', 'C2'], dict, 50), { added: 1, removed: 1 });
+  assert.deepEqual(state.levels, ['C1', 'C2']); assert.equal(state.levelsUpdated, 50);
+  assert.deepEqual(Object.keys(state.words).sort(), ['candid', 'glimpse', 'obscure', 'quasar', 'trail', 'yield']);
+  assert.equal(state.words.trail.status, 'learning'); assert.equal(state.words.yield.status, 'new');
+});

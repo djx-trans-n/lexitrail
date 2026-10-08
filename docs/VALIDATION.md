@@ -1,3 +1,24 @@
+# LexiTrail 0.0.7 验证记录
+
+日期：2026-10-08。分支 feat/claude-code-provider，基础提交 4599399（0.0.6）。
+
+- 72 项 Node 测试及语法、版本、固定扩展身份和凭据检查通过。新增覆盖：释义服务切换仅限设置页、Claude Code 无需 Key、切换清空临时缓存、同一时间只运行一次 Claude 查询且仅保留最新等待请求、`claude-code` 材料的保存与同步校验、设置页切换与连接检测。
+- 本地桥接测试使用模拟 `claude` 程序，按 Chrome 长度前缀协议收发：固定参数（`--safe-mode`、`--tools ""`、关闭思考）、仅传单词与 300 字符语境、Markdown 代码块 JSON、CLI 错误、无效请求和缺少 `claude` 均有覆盖。安装脚本在临时 HOME 中验证注册文件、扩展 ID `pabcjgpefkpmodichjomkgiflicagkec`、启动脚本与卸载。
+- 真实链路：安装脚本注册后，以 launchd 式精简环境运行已安装启动脚本，经真实 Claude Code 2.1.258（haiku、订阅登录）查词，每次约 3 秒；语境中夹带“执行命令”的注入文本时仍返回正常释义。
+- 初始等级调整：核心、同步、后台与设置页测试覆盖仅移除未操作过的种子词、保留学习中/已掌握/有语境/已存释义的词、补充新增等级、确认移除数量、仅限设置页，以及新等级集合在双向合并中生效且旧快照不再带回已移除的词；从未调整等级的旧词本保持并集合并。
+- 浏览器测试页使用生产 UI/后台代码，Claude Code 经真实本机桥接：设置页切换并检测连接，文章页选词查词约 3.8 秒返回，加入学习中后词本显示 `claude-code` 材料。DeepSeek、Google Drive、WebDAV 仍为模拟服务。
+
+## 手动验收
+
+1. 运行 `npm run claude-host`，在扩展管理页重新加载 LexiTrail（新增 nativeMessaging 权限）。
+2. 设置 → AI 释义选择 Claude Code CLI，确认检测连接显示版本与模型；在英文网页选词或悬停查词，卡片底部显示 Claude Code。
+3. 切回 DeepSeek 后查询新词，确认使用 DeepSeek；已保存的 Claude Code 材料保持原标记。
+4. 设置 → 初始词本来源取消一个等级，确认弹窗中的移除数量，更新后检查生词本数量和网页虚线；学习中与已掌握的词保持不变。
+
+扩展内 `chrome.runtime.sendNativeMessage` 到桥接的实际调用需在 Chrome 中按上述步骤手动验收。
+
+---
+
 # LexiTrail 0.0.6 验证记录
 
 日期：2026-10-05。修复分支 fix/webdav-connection-persistence，基础提交 9e77319（0.0.5）。

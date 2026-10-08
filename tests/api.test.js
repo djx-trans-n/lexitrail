@@ -24,3 +24,32 @@ test('API errors are actionable and omit response bodies and credentials', async
   try { await assert.rejects(API.deepseek('trail', '', 'fixture'), { message: 'Key 无效，请在设置中更新。' }); }
   finally { global.fetch = original; }
 });
+test('Claude Code lookup sends only a validated word and bounded context to the fixed native host', async () => {
+  const original = global.chrome; let request;
+  global.chrome = { runtime: { sendNativeMessage: async (host, message) => {
+    request = { host, message };
+    return { ok: true, data: { partOfSpeech: 'noun', meaning: '小径', definition: 'A path.', example: 'We walked along the trail.', exampleTranslation: '我们沿着小径走。' } };
+  } } };
+  try {
+    const result = await API.claudeCode('trail', 'x'.repeat(900));
+    assert.equal(request.host, 'com.lexitrail.claude'); assert.deepEqual(Object.keys(request.message), ['type', 'word', 'context']);
+    assert.equal(request.message.type, 'LOOKUP'); assert.equal(request.message.context.length, 300);
+    assert.equal(result.meaning, '小径'); assert.equal(result.example, 'We walked along the trail.');
+  } finally { global.chrome = original; }
+});
+test('Claude Code bridge errors distinguish a missing bridge, host failures and incomplete results', async () => {
+  const original = global.chrome;
+  const respond = behaviour => { global.chrome = { runtime: { sendNativeMessage: behaviour } }; };
+  try {
+    respond(async () => { throw new Error('Specified native messaging host not found.'); });
+    await assert.rejects(API.claudeCode('trail', ''), { message: /native-host\/install\.js/ });
+    respond(async () => { throw new Error('Access to the specified native messaging host is forbidden.'); });
+    await assert.rejects(API.claudeCode('trail', ''), { message: /未授权/ });
+    respond(async () => ({ ok: false, error: 'Claude Code：Not logged in · Please run /login' }));
+    await assert.rejects(API.claudeCode('trail', ''), { message: 'Claude Code：Not logged in · Please run /login' });
+    respond(async () => ({ ok: true, data: { meaning: '小径' } }));
+    await assert.rejects(API.claudeCode('trail', ''), { message: /缺少必要内容/ });
+    respond(async () => ({ ok: true, data: { version: '2.1.258 (Claude Code)', model: 'haiku' } }));
+    assert.deepEqual(await API.claudeCodeStatus(), { version: '2.1.258 (Claude Code)', model: 'haiku' });
+  } finally { global.chrome = original; }
+});

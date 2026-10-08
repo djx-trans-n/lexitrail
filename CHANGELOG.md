@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.0.7 — 2026-10-08
+
+- AI service switch between DeepSeek Flash and the local Claude Code CLI, so lookups can use a Claude subscription instead of a paid API key.
+- Native messaging bridge (`native-host/`) with a per-user installer for Chrome, Chromium and Edge on macOS and Linux; it accepts only a word and bounded context and runs `claude -p` with a fixed prompt, all tools, MCP, plugins and thinking disabled.
+- One Claude Code lookup runs at a time and only the newest waiting word is kept; switching service clears unsaved cached results.
+- Saved material records `model: "claude-code"`; all devices need 0.0.7 before syncing such snapshots.
+- Initial CEFR levels can be changed after initialization: removing a level drops only its untouched new-word entries, adding one seeds its words, and `levelsUpdated` keeps removed entries from returning through older sync snapshots.
+
 ## 0.0.5 — 2026-10-05
 
 - Optional HTTPS WebDAV manual sync, per-device snapshots in a dedicated LexiTrail folder, connection verification and local credential removal.

@@ -181,3 +181,63 @@ test('WebDAV rejected credentials persist through page reload and sync remains a
   assert.match(w.document.querySelector('#sync-status').textContent,/已保存并验证/);assert.equal(calls.filter(t=>t==='WEBDAV_SYNC').length,2);
   dom.window.close();
 });
+test('AI service selector switches between DeepSeek key and Claude Code check, reporting bridge status', async () => {
+  const open = (aiProvider, status) => {
+    const dom = new JSDOM(fs.readFileSync(path.join(root, 'options.html'), 'utf8'), { url: 'https://example.org/options.html', runScripts: 'outside-only' });
+    const w = dom.window, calls = [];
+    w.chrome = { runtime: { sendMessage: async m => {
+      calls.push(m);
+      if (m.type === 'GET_LEVELS') return { ok: true, data: [] };
+      if (m.type === 'GET_STATE') return { ok: true, data: { state: { initialized: true, enabled: true, levels: [], words: {} }, hasKey: false } };
+      if (m.type === 'GET_SETTINGS') return { ok: true, data: { key: '', sync: {}, aiProvider } };
+      if (m.type === 'AI_PROVIDER') { if (m.provider === 'stale') return { ok: false, error: '未知请求。' }; aiProvider = m.provider; return { ok: true, data: {} }; }
+      if (m.type === 'CLAUDE_STATUS') return status();
+    } }, storage: { onChanged: { addListener: () => {} } } };
+    w.eval(fs.readFileSync(path.join(root, 'core.js'), 'utf8')); w.eval(fs.readFileSync(path.join(root, 'options.js'), 'utf8'));
+    return { dom, w, calls, $: s => w.document.querySelector(s) };
+  };
+  const ok = async () => ({ ok: true, data: { version: '2.1.258', model: 'haiku' } });
+  const f = open('deepseek', ok); await new Promise(r => setTimeout(r, 10));
+  assert.equal(f.$('#ai-provider').value, 'deepseek'); assert(!f.$('#deepseek-fields').hidden); assert(f.$('#claude-fields').hidden);
+  assert(!f.calls.some(m => m.type === 'CLAUDE_STATUS'));
+  f.$('#ai-provider').value = 'claude-code'; f.$('#ai-provider').dispatchEvent(new f.w.Event('change')); await new Promise(r => setTimeout(r, 10));
+  assert.deepEqual({ ...f.calls.find(m => m.type === 'AI_PROVIDER') }, { type: 'AI_PROVIDER', provider: 'claude-code' });
+  assert(f.$('#deepseek-fields').hidden); assert(!f.$('#claude-fields').hidden);
+  assert.equal(f.$('#claude-status').textContent, '已连接 Claude Code 2.1.258 · 模型 haiku'); assert(f.$('#claude-status').classList.contains('ok'));
+  f.dom.window.close();
+  const missing = open('claude-code', async () => ({ ok: false, error: '未找到 Claude Code 本地桥接，请先运行 node native-host/install.js 安装。' }));
+  await new Promise(r => setTimeout(r, 10));
+  assert(!missing.$('#claude-fields').hidden); assert.match(missing.$('#claude-status').textContent, /install\.js/);
+  assert(missing.$('#claude-status').classList.contains('error')); assert(!missing.$('#claude-check').disabled);
+  const option = missing.w.document.createElement('option'); option.value = 'stale'; missing.$('#ai-provider').append(option);
+  missing.$('#ai-provider').value = 'stale'; missing.$('#ai-provider').dispatchEvent(new missing.w.Event('change')); await new Promise(r => setTimeout(r, 10));
+  assert.match(missing.$('#message').textContent, /重新加载 LexiTrail/); assert.equal(missing.$('#ai-provider').value, 'claude-code');
+  missing.dom.window.close();
+});
+test('level editor confirms removal counts before changing initial levels', async () => {
+  const dom = new JSDOM(fs.readFileSync(path.join(root, 'options.html'), 'utf8'), { url: 'https://example.org/options.html', runScripts: 'outside-only' });
+  const w = dom.window, calls = [], prompts = []; let accept = false;
+  let state = { initialized: true, enabled: true, levels: ['B1', 'B2'], words: {
+    forest: { word: 'forest', level: 'B1', status: 'new', examples: [] }, trail: { word: 'trail', level: 'B1', status: 'learning', statusUpdated: 5, examples: [] },
+    candid: { word: 'candid', level: 'B1', status: 'new', examples: [{ text: 'Kept.' }] }, obscure: { word: 'obscure', level: 'B2', status: 'new', examples: [] } } };
+  w.confirm = text => { prompts.push(text); return accept; };
+  w.chrome = { runtime: { sendMessage: async m => {
+    calls.push(m);
+    if (m.type === 'GET_LEVELS') return { ok: true, data: ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'].map(level => ({ level, count: 100 })) };
+    if (m.type === 'GET_STATE') return { ok: true, data: { state } };
+    if (m.type === 'GET_SETTINGS') return { ok: true, data: { key: '', sync: {} } };
+    if (m.type === 'SET_LEVELS') { state = { ...state, levels: m.levels }; return { ok: true, data: { added: 0, removed: 1, count: 3 } }; }
+  } }, storage: { onChanged: { addListener: () => {} } } };
+  w.eval(fs.readFileSync(path.join(root, 'core.js'), 'utf8')); w.eval(fs.readFileSync(path.join(root, 'options.js'), 'utf8'));
+  await new Promise(r => setTimeout(r, 10));
+  const $ = s => w.document.querySelector(s), box = level => $(`#level-options input[value="${level}"]`);
+  assert(!$('#level-editor').hidden); assert(box('B1').checked); assert(!box('A1').checked); assert($('#update-levels').disabled);
+  box('B1').checked = false; box('B1').dispatchEvent(new w.Event('change', { bubbles: true })); assert(!$('#update-levels').disabled);
+  $('#update-levels').click(); await new Promise(r => setTimeout(r, 10));
+  assert.match(prompts[0], /移除 1 个尚未操作过的 B1 词/); assert(!calls.some(m => m.type === 'SET_LEVELS'));
+  accept = true; $('#update-levels').click(); await new Promise(r => setTimeout(r, 10));
+  assert.deepEqual([...calls.find(m => m.type === 'SET_LEVELS').levels], ['B2']);
+  assert.match($('#message').textContent, /初始等级已更新为 B2/); assert.match($('#seed-description').textContent, /初始等级：B2。/);
+  assert(!box('B1').checked); assert($('#update-levels').disabled);
+  dom.window.close();
+});
